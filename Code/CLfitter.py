@@ -3,7 +3,7 @@ from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 from functools import partial
 import rsciio.digitalmicrograph as dm
-from CLspectrum_sim_OOP import *
+from CLsimulator import *
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
 from scipy import signal
@@ -32,6 +32,8 @@ class CoreLossFitter:
         self.isolated_fine_structure = None
         self.core_loss_data = None
 
+        self.core_loss_data_changed = None
+
 
 
 
@@ -42,7 +44,8 @@ class CoreLossFitter:
 
         file = dm.file_reader(file_path)
         self.core_loss_data = file[0]['data']
-
+        self.core_loss_data_changed = self.core_loss_data.copy()
+        
         # Extracting the energy loss axis and spatial axis
         energy_loss_md = file[0]['axes'][1]
         begin, self.dispersion, size = energy_loss_md['offset'], energy_loss_md['scale'], energy_loss_md['size']
@@ -58,23 +61,24 @@ class CoreLossFitter:
         '''
         Aligns the core loss data by cross-correlating the data with the reference spectrum
         '''
-        reference_spectrum = self.core_loss_data[reference_spectrum_index]
-        for i, x in enumerate(self.core_loss_data):
+        reference_spectrum = self.core_loss_data_changed[reference_spectrum_index]
+        for i, x in enumerate(self.core_loss_data_changed):
             cross_correlate = signal.correlate(x, reference_spectrum, mode='full')
             shift = len(x) - np.argmax(cross_correlate)
-            self.core_loss_data[i] = np.roll(x, shift)
+            self.core_loss_data_changed[i] = np.roll(x, shift)
             self.shifts.append(shift)
 
-        #window data such that all spectra starts at the same energy loss
-        self.window_data(lower = self.energy_loss_axis[max(np.abs(self.shifts))])
-        return self.core_loss_data, self.energy_loss_axis
+        #window data such that all spectra starts/ends at the same energy loss
+        self.window_data(lower = self.energy_loss_axis[max(self.shifts)], 
+                         higher = self.energy_loss_axis[min(self.shifts)])
+        return self.core_loss_data_changed, self.energy_loss_axis
                 
     def window_data(self, lower=0, higher=1e6):
         '''
         Windows the core loss data to a specific energy loss range
         '''
         window = (self.energy_loss_axis<higher)&(self.energy_loss_axis>lower)
-        self.core_loss_data = self.core_loss_data[:,window]
+        self.core_loss_data_changed = self.core_loss_data_changed[:,window]
         self.energy_loss_axis = self.energy_loss_axis[window]
         return self.core_loss_data, self.energy_loss_axis
     
@@ -82,21 +86,24 @@ class CoreLossFitter:
         '''
         Normalizes the core loss data 
         '''
-        self.core_loss_data /= self.core_loss_data[:, 0][:, np.newaxis]
-        return self.core_loss_data
+        self.core_loss_data_changed /= self.core_loss_data_changed[:, 0][:, np.newaxis]
+        return self.core_loss_data_changed
     
     def get_background_fit(self, minimal_ionization_energy = 100):
         '''
         Fits the background of the core loss data and returns the background fit and the isolated edges
         '''
-        self.isolated_edges = np.zeros_like(self.core_loss_data)
-        self.background_fit = np.zeros_like(self.core_loss_data)
+        self.isolated_edges = np.zeros_like(self.core_loss_data_changed)
+        self.background_fit = np.zeros_like(self.core_loss_data_changed)
         max_energy = minimal_ionization_energy-5
 
-        for i,x in enumerate(self.core_loss_data):
-            popt, _ = curve_fit(self.background, self.energy_loss_axis[self.energy_loss_axis<max_energy], x[self.energy_loss_axis<max_energy], maxfev = 10000)
+        for i,x in enumerate(self.core_loss_data_changed):
+            popt, _ = curve_fit(self.background, self.energy_loss_axis[self.energy_loss_axis<max_energy], 
+                                x[self.energy_loss_axis<max_energy], maxfev = 10000)
             self.background_fit[i] = self.background(self.energy_loss_axis, *popt)
             self.isolated_edges[i] = x-self.background_fit[i]
+            self.core_loss_data_changed[i] = x-self.background_fit[i]
+
         return self.background_fit, self.isolated_edges
 
 
@@ -106,7 +113,8 @@ class CoreLossFitter:
         Returns the simulated edge and the ionization energy
         '''
         simulation_object = SimulateEELSSpectrum(file_path, element, edge, self.E_0, self.beta)
-        simulation_object.create_axes(self.energy_loss_axis[0], self.energy_loss_axis[-1]+self.dispersion, self.dispersion)
+        simulation_object.create_axes(self.energy_loss_axis[0], self.energy_loss_axis[-1]+self.dispersion, 
+                                      self.dispersion)
         self.simulated_edge, self.ionization_energy = simulation_object.calculate_all_edges()
         return self.simulated_edge, self.ionization_energy
     
@@ -114,7 +122,8 @@ class CoreLossFitter:
         '''
         Fits the edges of the core loss data to the simulated edges and returns the fitted edges
         '''
-        edge_interpolated = interp1d(self.energy_loss_axis, self.simulated_edge/max(self.simulated_edge), kind='linear', fill_value=0, bounds_error=False)
+        edge_interpolated = interp1d(self.energy_loss_axis, self.simulated_edge/max(self.simulated_edge), 
+                                     kind='linear', fill_value=0, bounds_error=False)
 
         edge_interpolated_partial = partial(self.edge_model, edge_interpolated=edge_interpolated)
 
@@ -123,6 +132,7 @@ class CoreLossFitter:
         for i, x in enumerate(self.isolated_edges):
             popt, _ = curve_fit(edge_interpolated_partial, self.energy_loss_axis, x,  maxfev = 10000)
             self.isolated_fine_structure[i] = x-edge_interpolated_partial(self.energy_loss_axis, *popt)
+            self.core_loss_data_changed[i] = x-edge_interpolated_partial(self.energy_loss_axis, *popt)
         return self.isolated_fine_structure
     
     def choose_region(self, start, stop):
@@ -130,9 +140,9 @@ class CoreLossFitter:
         Chooses a specific spatial region of the core loss data'
         '''
         window = (self.spatial_axis<stop)&(self.spatial_axis>start)
-        self.core_loss_data = self.core_loss_data[:,window]
+        self.core_loss_data_changed = self.core_loss_data_changed[:,window]
         self.spatial_axis = self.spatial_axis[window]
-        return self.core_loss_data, self.spatial_axis
+        return self.core_loss_data_changed, self.spatial_axis
     
     def calc_mean_stdev(self):
         '''
@@ -142,18 +152,19 @@ class CoreLossFitter:
         mean = np.mean(self.isolated_edges, axis=0)
         return mean, stdev
     
-    def plot(self, data, axis, title):
+    def plot(self):
         '''
         Plots 3D data with the relative position on the y-axis and the energy loss on the x-axis
         '''
-        plt.figure(figsize=(10,5))
-        plt.imshow(data, aspect='auto', extent=[axis[0], axis[-1], 0, len(data)], cmap='inferno')
-        plt.colorbar()
-        plt.title(title)
-        plt.xlabel('Energy loss [eV]')
-        plt.ylabel('Spatial axis')
-        plt.show()
-
+        fig = plt.figure()
+        plt.imshow(self.core_loss_data_changed, aspect='auto', 
+                   extent=[self.energy_loss_axis[0], self.energy_loss_axis[-1], 
+                           self.spatial_axis[0], self.spatial_axis[-1]], 
+                           cmap='inferno', vmin=0)
+        plt.colorbar(label='Intensity [a.u.]')
+        plt.xlabel('Energy Loss [eV]')
+        plt.ylabel('Relative Position [nm]')
+    
     @staticmethod
     def background(counts, A, r):
         '''
