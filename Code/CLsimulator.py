@@ -2,6 +2,7 @@ import numpy as np
 import h5py
 import constants_values as cv
 import scipy.interpolate as interp
+import matplotlib.pyplot as plt
 import math
 
 ##################################################################################
@@ -159,22 +160,31 @@ class LowLossEELS:
 # EELS CL-Edge Functions
 ###################################################################################
 class SimulateEELSSpectrum:
-    def __init__(self, file_path, element, shell, E_0, beta):
+    def __init__(self, file_path, element, shell, E_0, beta, seed):
         self.file_path = file_path
+
         self.element = element
         self.shell = shell
+
         self.E_0 = E_0
         self.beta = beta
         self.edge_coordinates = []
+
         self.dispersion = None
         self.energy_axis = None
         self.spectrum_values = None
-    
+
+        self.set_seed(seed)
+        np.random.seed(seed)
+        
     def create_axes(self, start, stop, dispersion):
         self.dispersion = dispersion
         self.energy_axis = np.arange(start, stop, dispersion)
         self.spectrum_values = np.zeros_like(self.energy_axis)
         return self.energy_axis
+    
+    def set_seed(self, seed):
+        np.random.seed(seed)
         
     @staticmethod
     def get_shell_info(shell):
@@ -191,7 +201,8 @@ class SimulateEELSSpectrum:
             edge_object = Edge(self.file_path, self.element, edge, self.energy_axis)
             edge_values, ionization_energy = edge_object.create_edge_shape(self.E_0, self.beta) 
             self.spectrum_values += edge_values
-            self.edge_coordinates.append([max(edge_values), ionization_energy])
+            self.edge_coordinates.append([np.argmax(edge_values), ionization_energy])
+            print([max(edge_values), ionization_energy])
         return self.spectrum_values, ionization_energy
 
     def apply_low_loss(self):
@@ -205,12 +216,12 @@ class SimulateEELSSpectrum:
         r = np.random.uniform(2,4)
         random_edge_coordinate = self.edge_coordinates[np.random.randint(len(self.edge_coordinates))]
 
-        jump_reference = A*(random_edge_coordinate[1]/self.E_0)**-r
+        jump_reference = A*(random_edge_coordinate[1]/self.energy_axis[0])**-r
 
         jump_limits = [0.2, 1.5]
         jump = np.random.uniform(*jump_limits)
-        self.spectrum_values *= jump*jump_reference/random_edge_coordinate[0]
-        self.spectrum_values += A*(self.energy_axis/self.E_0)**-r
+        self.spectrum_values *= jump*jump_reference/self.spectrum_values[random_edge_coordinate[0]]
+        self.spectrum_values += A*(self.energy_axis/self.energy_axis[0])**-r
 
         return self.spectrum_values
 
@@ -219,7 +230,7 @@ class SimulateEELSSpectrum:
         return self.spectrum_values
 
     def instrumental_shift(self):
-        self.energy_axis = np.random.randint(-5/self.dispersion, 5/self.dispersion) * self.dispersion
+        self.energy_axis += np.random.randint(-5/self.dispersion, 5/self.dispersion) * self.dispersion
         
         return self.spectrum_values
     
@@ -230,7 +241,15 @@ class SimulateEELSSpectrum:
         
         self.calculate_all_edges()
         self.apply_low_loss()
-        # self.add_powerlaw_background()
+        self.add_powerlaw_background()
         # self.add_poissonian_noise()
         self.instrumental_shift()
         return self.spectrum_values
+    
+    def plot_spectrum(self):
+        plt.plot(self.energy_axis, self.spectrum_values)
+        plt.xlabel('Energy Loss (eV)')
+        plt.ylabel('Intensity (a.u.)')
+        plt.title(f'EELS Spectrum for {self.element} {self.shell} shell')
+        plt.grid()
+        plt.show()
