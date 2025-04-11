@@ -107,12 +107,12 @@ class CoreLossFitter:
         return self.background_fit, self.isolated_edges
 
 
-    def get_simulated_edge(self, element, edge, file_path = 'data/Dirac_GOS.gosh',):
+    def get_simulated_edge(self, element, edge, file_path = '../data/Dirac_GOS.gosh',):
         '''
         Calculates the edge shape according to the element and edge specified with a Generalized oscillator strength.
         Returns the simulated edge and the ionization energy
         '''
-        simulation_object = SimulateEELSSpectrum(file_path, element, edge, self.E_0, self.beta)
+        simulation_object = SimulateEELSSpectrum(file_path, element, edge, self.E_0, self.beta, 1)
         simulation_object.create_axes(self.energy_loss_axis[0], self.energy_loss_axis[-1]+self.dispersion, 
                                       self.dispersion)
         self.simulated_edge, self.ionization_energy = simulation_object.calculate_all_edges()
