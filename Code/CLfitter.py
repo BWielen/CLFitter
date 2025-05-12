@@ -37,21 +37,21 @@ class CoreLossFitter:
 
 
 
-    def read_from_dm3(self, file_path):
+    def read_from_dm3(self, file_path, EELS_index = 0):
         '''
         Reads the core loss data from a dm3 file and returns the core loss data, energy loss axis, and spatial axis
         '''
 
         file = dm.file_reader(file_path)
-        self.core_loss_data = file[0]['data']
+        self.core_loss_data = file[EELS_index]['data']
         self.core_loss_data_changed = self.core_loss_data.copy()
         
         # Extracting the energy loss axis and spatial axis
-        energy_loss_md = file[0]['axes'][1]
+        energy_loss_md = file[EELS_index]['axes'][1]
         begin, self.dispersion, size = energy_loss_md['offset'], energy_loss_md['scale'], energy_loss_md['size']
         self.energy_loss_axis = np.linspace(begin, begin + self.dispersion * (size - 1), size)
 
-        spatial_md = file[0]['axes'][0]
+        spatial_md = file[EELS_index]['axes'][0]
         begin, step, size = spatial_md['offset'], spatial_md['scale'], spatial_md['size']
         self.spatial_axis = np.linspace(begin, begin + step * (size - 1), size)
 
